@@ -23,11 +23,26 @@ Pipeline (per PDF in reports/)
    → output/{filename}.json
 7. Every step is logged to console with timestamps.
 
-Usage
------
-    from src.agent import ExtractionAgent
-    agent = ExtractionAgent()
-    summary = agent.run()
+Retry logic (max MAX_RETRIES = 2 per document)
+-----------------------------------------------
+• If Claude's response cannot be parsed into FundMetrics (invalid JSON /
+  missing tool call / schema mismatch), retry once with the correction:
+    "Your previous response was not valid JSON. Return ONLY a JSON object
+     with no preamble or markdown."
+  Retry 2 uses the same message.  After MAX_RETRIES the document's
+  fields are all forced to LOW confidence and routed to the review queue.
+
+• If a balance-sheet validation failure is detected, retry once using a
+  MULTI-TURN conversation so Claude can see what it previously extracted:
+    assistant turn : previous tool_use block
+    user turn      : tool_result + "The balance sheet equation does not
+                     balance with your previous extraction. Please
+                     re-examine the document and correct the figures."
+  If the balance sheet still fails after MAX_RETRIES, routing continues
+  normally (the failing fields are flagged by _route_and_write).
+
+• Retry log format: "RETRY 1/2: invalid JSON response"
+                    "RETRY 1/2: balance sheet validation failure"
 
 Note on model: the user-specified model (claude-3-5-sonnet) is retired as of
 Oct 2025.  The closest current equivalent, claude-sonnet-4-6, is used instead.
@@ -44,19 +59,19 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import anthropic
 import pdfplumber
 from dotenv import load_dotenv
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError
 
 from .extractor import FinancialMetrics
 from .validator import DataValidator
 
 # ── Environment & logging ──────────────────────────────────────────────────────
 
-load_dotenv()  # reads ANTHROPIC_API_KEY (and anything else) from .env
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +82,20 @@ logger = logging.getLogger(__name__)
 
 # claude-3-5-sonnet is retired (Oct 2025); claude-sonnet-4-6 is the current equivalent
 MODEL = "claude-sonnet-4-6"
+
+# Maximum Claude API retries per document (not counting the initial attempt)
+MAX_RETRIES = 2
+
+# ── Custom exception ───────────────────────────────────────────────────────────
+
+
+class ExtractionParseError(Exception):
+    """
+    Raised when Claude's API response cannot be parsed into a FundMetrics
+    object — e.g. no tool_use block returned, or the input dict fails
+    Pydantic validation.
+    """
+
 
 # ── Confidence type ────────────────────────────────────────────────────────────
 
@@ -80,13 +109,13 @@ class FieldExtraction(BaseModel):
 
     value: Optional[str] = None
     confidence: Confidence
-    reason: str  # why this confidence level was assigned
+    reason: str
 
 
 class FundMetrics(BaseModel):
     """All fields extracted from one fund report."""
 
-    # ── Primary fund metrics (per user specification) ──
+    # Primary fund metrics
     nav: FieldExtraction
     capital_called: FieldExtraction
     distributions: FieldExtraction
@@ -97,7 +126,7 @@ class FundMetrics(BaseModel):
     portfolio_company_count: FieldExtraction
     top_holdings: FieldExtraction
 
-    # ── Balance-sheet / income fields (for DataValidator) ──
+    # Balance-sheet / income fields (for DataValidator)
     total_assets: FieldExtraction
     total_liabilities: FieldExtraction
     total_equity: FieldExtraction
@@ -108,9 +137,9 @@ class FundMetrics(BaseModel):
     ebitda: FieldExtraction
 
 
-# ── Tool schema (explicit JSON Schema avoids $defs / $ref edge-cases) ─────────
+# ── Tool schema ────────────────────────────────────────────────────────────────
 
-_FIELD = {
+_FIELD: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "value": {
@@ -145,31 +174,23 @@ EXTRACTION_TOOL: Dict[str, Any] = {
     "input_schema": {
         "type": "object",
         "properties": {
-            # Primary fund fields
-            "nav": {**_FIELD, "description": "Net Asset Value (NAV) of the fund."},
-            "capital_called": {**_FIELD, "description": "Total capital called / drawn down from LPs."},
-            "distributions": {**_FIELD, "description": "Total distributions returned to LPs."},
-            "irr": {**_FIELD, "description": "Internal Rate of Return (IRR); note gross vs net if labelled."},
-            "moic": {**_FIELD, "description": "Multiple on Invested Capital (MOIC / TVPI / investment multiple)."},
-            "gross_returns": {**_FIELD, "description": "Gross return or gross IRR as stated."},
-            "net_returns": {**_FIELD, "description": "Net return or net IRR as stated."},
-            "portfolio_company_count": {**_FIELD, "description": "Number of portfolio companies in the fund."},
-            "top_holdings": {
-                **_FIELD,
-                "description": (
-                    "Comma-separated list of top portfolio company names if mentioned; "
-                    "null if not present."
-                ),
-            },
-            # Balance-sheet / income fields
-            "total_assets": {**_FIELD, "description": "Total assets (balance sheet)."},
-            "total_liabilities": {**_FIELD, "description": "Total liabilities (balance sheet)."},
-            "total_equity": {**_FIELD, "description": "Total equity / shareholders' equity / net assets."},
-            "total_debt": {**_FIELD, "description": "Total debt or total borrowings."},
-            "cash_and_equivalents": {**_FIELD, "description": "Cash and cash equivalents."},
-            "net_debt": {**_FIELD, "description": "Net debt (total debt minus cash)."},
-            "revenue": {**_FIELD, "description": "Total revenue or net revenue."},
-            "ebitda": {**_FIELD, "description": "EBITDA (earnings before interest, taxes, depreciation, amortisation)."},
+            "nav":                    {**_FIELD, "description": "Net Asset Value (NAV) of the fund."},
+            "capital_called":         {**_FIELD, "description": "Total capital called / drawn down from LPs."},
+            "distributions":          {**_FIELD, "description": "Total distributions returned to LPs."},
+            "irr":                    {**_FIELD, "description": "Internal Rate of Return (IRR); note gross vs net if labelled."},
+            "moic":                   {**_FIELD, "description": "Multiple on Invested Capital (MOIC / TVPI / investment multiple)."},
+            "gross_returns":          {**_FIELD, "description": "Gross return or gross IRR as stated."},
+            "net_returns":            {**_FIELD, "description": "Net return or net IRR as stated."},
+            "portfolio_company_count":{**_FIELD, "description": "Number of portfolio companies in the fund."},
+            "top_holdings":           {**_FIELD, "description": "Comma-separated list of top portfolio company names; null if not mentioned."},
+            "total_assets":           {**_FIELD, "description": "Total assets (balance sheet)."},
+            "total_liabilities":      {**_FIELD, "description": "Total liabilities (balance sheet)."},
+            "total_equity":           {**_FIELD, "description": "Total equity / shareholders' equity / net assets."},
+            "total_debt":             {**_FIELD, "description": "Total debt or total borrowings."},
+            "cash_and_equivalents":   {**_FIELD, "description": "Cash and cash equivalents."},
+            "net_debt":               {**_FIELD, "description": "Net debt (total debt minus cash)."},
+            "revenue":                {**_FIELD, "description": "Total revenue or net revenue."},
+            "ebitda":                 {**_FIELD, "description": "EBITDA (earnings before interest, taxes, depreciation, amortisation)."},
         },
         "required": [
             "nav", "capital_called", "distributions", "irr", "moic",
@@ -192,6 +213,18 @@ _REVIEW_HEADERS = [
     "reason_for_flag",
 ]
 
+# ── Retry correction messages ──────────────────────────────────────────────────
+
+_CORRECTION_PARSE = (
+    "Your previous response was not valid JSON. "
+    "Return ONLY a JSON object with no preamble or markdown."
+)
+
+_CORRECTION_BALANCE_SHEET = (
+    "The balance sheet equation does not balance with your previous extraction. "
+    "Please re-examine the document and correct the figures."
+)
+
 # ── Numeric parsing ────────────────────────────────────────────────────────────
 
 
@@ -209,16 +242,13 @@ def _parse_numeric(value: Optional[str]) -> Optional[float]:
     if not value:
         return None
     s = value.strip()
-    # Remove currency symbols and thousands commas
     s = re.sub(r"[$£€,]", "", s)
-    # Strip trailing unit markers and note multiplier
     multiplier = 1.0
     for suffix, mult in (("T", 1e12), ("B", 1e9), ("M", 1e6), ("K", 1e3)):
         if s.upper().endswith(suffix):
             s = s[:-1]
             multiplier = mult
             break
-    # Strip % and x/X (MOIC)
     s = re.sub(r"[%xX]", "", s).strip()
     try:
         return float(s) * multiplier
@@ -295,7 +325,7 @@ class ExtractionAgent:
 
         logger.info(
             f"[{_now()}] ══ ExtractionAgent starting — "
-            f"{len(files)} PDF(s) · model={MODEL} ══"
+            f"{len(files)} PDF(s) · model={MODEL} · max_retries={MAX_RETRIES} ══"
         )
 
         output_files = 0
@@ -309,14 +339,10 @@ class ExtractionAgent:
                 output_files += 1
                 flagged_total += flagged
             except anthropic.AuthenticationError:
-                logger.error(
-                    f"[{_now()}] │  Authentication failed — check ANTHROPIC_API_KEY."
-                )
+                logger.error(f"[{_now()}] │  Authentication failed — check ANTHROPIC_API_KEY.")
                 errors += 1
             except anthropic.RateLimitError:
-                logger.error(
-                    f"[{_now()}] │  Rate-limited by Anthropic API — retry later."
-                )
+                logger.error(f"[{_now()}] │  Rate-limited by Anthropic API — retry later.")
                 errors += 1
             except anthropic.APIError as exc:
                 logger.error(f"[{_now()}] │  Anthropic API error: {exc}")
@@ -339,9 +365,7 @@ class ExtractionAgent:
 
     def process_single(self, pdf_path: str) -> Optional[Dict[str, Any]]:
         """
-        Extract a single PDF.
-
-        Returns the clean-fields dict written to output/, or None on error.
+        Extract a single PDF and return the clean-fields dict, or None on error.
         """
         p = Path(pdf_path)
         if not p.exists():
@@ -364,7 +388,6 @@ class ExtractionAgent:
     def _ingest_pdf(self, pdf_path: Path) -> str:
         """Extract all text and table content from a PDF with pdfplumber."""
         logger.info(f"[{_now()}] │  Step 1 – Ingesting PDF…")
-
         pages: List[str] = []
         page_count = 0
 
@@ -372,15 +395,12 @@ class ExtractionAgent:
             page_count = len(pdf.pages)
             for i, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ""
-
-                # Serialise tables as pipe-delimited rows so Claude can read them
                 table_lines: List[str] = []
                 for table in page.extract_tables() or []:
                     for row in table:
                         table_lines.append(
                             " | ".join(str(cell or "").strip() for cell in row)
                         )
-
                 page_str = f"=== Page {i} ===\n{text}"
                 if table_lines:
                     page_str += "\n[TABLES]\n" + "\n".join(table_lines)
@@ -388,12 +408,11 @@ class ExtractionAgent:
 
         full_text = "\n\n".join(pages)
         logger.info(
-            f"[{_now()}] │  Extracted {page_count} page(s) — "
-            f"{len(full_text):,} chars"
+            f"[{_now()}] │  Extracted {page_count} page(s) — {len(full_text):,} chars"
         )
         return full_text
 
-    # ── Steps 2 & 3 — Extract with Claude and assign confidence ───────────────
+    # ── Steps 2 & 3 — Extract with Claude (single call) ───────────────────────
 
     _SYSTEM_PROMPT = """\
 You are a senior financial analyst specialising in private equity and credit fund reporting.
@@ -413,18 +432,46 @@ Additional rules:
 • Do not guess. Do not hallucinate numbers not present in the text.\
 """
 
-    def _extract_with_claude(self, text: str, filename: str) -> FundMetrics:
+    def _call_claude(
+        self,
+        text: str,
+        filename: str,
+        extra_turns: Optional[List[Dict[str, Any]]] = None,
+        parse_hint: Optional[str] = None,
+        attempt: int = 0,
+    ) -> Tuple[FundMetrics, str, Dict[str, Any]]:
         """
-        Call Claude (streaming, forced tool use) and return validated FundMetrics.
+        Make one streaming API call to Claude and return parsed results.
 
-        Steps 2 (extraction) and 3 (confidence assignment) happen here.
+        Parameters
+        ----------
+        text : str
+            Full PDF text (may be truncated).
+        filename : str
+            Used in the user message for context.
+        extra_turns : list, optional
+            Additional message turns to append after the initial user message.
+            Used for balance-sheet retries so Claude sees its previous extraction.
+            Format: [{"role": "assistant", "content": [...]},
+                     {"role": "user",      "content": [...]}]
+        parse_hint : str, optional
+            Short correction note appended to the user message.  Used for
+            invalid-JSON retries where there is no valid previous extraction to
+            reference in a multi-turn context.
+        attempt : int
+            0-indexed attempt number; used only for progress logging.
+
+        Returns
+        -------
+        (FundMetrics, tool_use_id, tool_input_dict)
+
+        Raises
+        ------
+        ExtractionParseError
+            If Claude does not return a ``record_fund_metrics`` tool call, or
+            if the tool input fails Pydantic validation.
         """
-        logger.info(
-            f"[{_now()}] │  Step 2 – Calling {MODEL} for extraction + "
-            "confidence scoring…"
-        )
-
-        # Truncate very long documents to stay well inside the context window
+        # ── Truncate very long documents ──────────────────────────────────────
         max_chars = 60_000
         if len(text) > max_chars:
             logger.warning(
@@ -433,6 +480,7 @@ Additional rules:
             )
             text = text[:max_chars] + "\n\n[DOCUMENT TRUNCATED]"
 
+        # ── Build initial user message ────────────────────────────────────────
         user_message = (
             f"Extract financial metrics from the following fund report.\n"
             f"File: {filename}\n\n"
@@ -443,29 +491,36 @@ Additional rules:
             "Call `record_fund_metrics` with every field populated. "
             "Set value=null and confidence=LOW for any field absent from the document."
         )
+        if parse_hint:
+            user_message += f"\n\nIMPORTANT: {parse_hint}"
 
-        # Stream the response; print dots to show live progress
-        logger.info(f"[{_now()}] │  Streaming…  ", )
+        messages: List[Dict[str, Any]] = [
+            {"role": "user", "content": user_message}
+        ]
+        if extra_turns:
+            messages.extend(extra_turns)
+
+        # ── Stream API call ───────────────────────────────────────────────────
+        attempt_label = f"attempt {attempt + 1}/{MAX_RETRIES + 1}"
+        logger.info(f"[{_now()}] │  Calling {MODEL} ({attempt_label}) — streaming…")
         print(f"  [{_now()}]   ", end="", flush=True)
 
         with self.client.messages.stream(
             model=MODEL,
             max_tokens=4_096,
             system=self._SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+            messages=messages,
             tools=[EXTRACTION_TOOL],
             tool_choice={"type": "tool", "name": "record_fund_metrics"},
         ) as stream:
             for event in stream:
-                # Print a dot for every JSON chunk to show live progress
                 if (
                     hasattr(event, "type")
                     and event.type == "content_block_delta"
-                    and hasattr(event, "delta")
-                    and getattr(event.delta, "type", None) == "input_json_delta"
+                    and getattr(getattr(event, "delta", None), "type", None) == "input_json_delta"
                 ):
                     print(".", end="", flush=True)
-            print()  # newline after progress dots
+            print()  # newline after dots
 
             final_message = stream.get_final_message()
 
@@ -475,59 +530,176 @@ Additional rules:
             f"output_tokens={final_message.usage.output_tokens}"
         )
 
-        # Extract the tool input from the response
+        # ── Extract tool call ─────────────────────────────────────────────────
+        tool_use_id: Optional[str] = None
         tool_input: Optional[Dict[str, Any]] = None
         for block in final_message.content:
-            if (
-                block.type == "tool_use"
-                and block.name == "record_fund_metrics"
-            ):
+            if getattr(block, "type", None) == "tool_use" and block.name == "record_fund_metrics":
+                tool_use_id = block.id
                 tool_input = block.input
                 break
 
-        if tool_input is None:
-            raise ValueError(
+        if tool_input is None or tool_use_id is None:
+            raise ExtractionParseError(
                 "Claude did not return a 'record_fund_metrics' tool call. "
-                "Response content: " + str(final_message.content)
+                f"Response content: {final_message.content}"
             )
 
-        logger.info(f"[{_now()}] │  Step 3 – Parsing confidence levels…")
-        metrics = FundMetrics.model_validate(tool_input)
+        # ── Parse into Pydantic model ─────────────────────────────────────────
+        try:
+            metrics = FundMetrics.model_validate(tool_input)
+        except ValidationError as exc:
+            raise ExtractionParseError(
+                f"Tool input failed FundMetrics validation: {exc}"
+            ) from exc
 
-        # Log a one-line confidence summary
-        conf_summary = {
-            name: field.confidence
-            for name, field in metrics.model_dump().items()
-            if isinstance(field, dict)
-        }
-        # Rebuild from model fields for clean display
-        conf_summary = {
-            name: getattr(metrics, name).confidence
-            for name in metrics.model_fields
-        }
-        high = sum(1 for c in conf_summary.values() if c == "HIGH")
-        med  = sum(1 for c in conf_summary.values() if c == "MEDIUM")
-        low  = sum(1 for c in conf_summary.values() if c == "LOW")
-        logger.info(
-            f"[{_now()}] │  Confidence summary — "
-            f"HIGH={high}, MEDIUM={med}, LOW={low}"
-        )
+        return metrics, tool_use_id, tool_input
 
-        return metrics
+    # ── Retry orchestrator ─────────────────────────────────────────────────────
+
+    def _extract_and_validate_with_retries(
+        self, text: str, filename: str
+    ) -> Tuple[Optional[FundMetrics], Dict[str, List[str]]]:
+        """
+        Run the extract→validate loop with up to MAX_RETRIES correction attempts.
+
+        Retry trigger 1 — parse failure:
+            Claude returned something that could not be parsed.  Retry with
+            ``_CORRECTION_PARSE`` appended to the user message (no previous
+            extraction to show, so single-turn only).
+
+        Retry trigger 2 — balance-sheet validation failure:
+            Claude returned valid JSON but the balance-sheet equation does not
+            balance.  Retry using a MULTI-TURN conversation so Claude sees its
+            previous extraction alongside the correction instruction.
+
+        Returns
+        -------
+        (metrics, failures)
+            ``metrics`` is None only if ALL retries failed on parse errors;
+            callers must route that case through ``_flag_all_fields_low``.
+            ``failures`` is the validation-failure dict from the final attempt.
+        """
+        metrics: Optional[FundMetrics] = None
+        failures: Dict[str, List[str]] = {}
+
+        # State carried across retries
+        fail_type: Optional[str] = None   # "parse" | "balance_sheet"
+        extra_turns: List[Dict[str, Any]] = []
+        parse_hint: Optional[str] = None
+
+        for attempt in range(MAX_RETRIES + 1):  # 0, 1, 2
+            # ── Log retry header ──────────────────────────────────────────────
+            if attempt > 0:
+                if fail_type == "parse":
+                    desc = "invalid JSON response"
+                else:
+                    desc = "balance sheet validation failure"
+                logger.warning(
+                    f"[{_now()}] │  RETRY {attempt}/{MAX_RETRIES}: {desc}"
+                )
+
+            # ── Call Claude ───────────────────────────────────────────────────
+            try:
+                metrics, tool_use_id, tool_input = self._call_claude(
+                    text=text,
+                    filename=filename,
+                    extra_turns=extra_turns,
+                    parse_hint=parse_hint,
+                    attempt=attempt,
+                )
+            except ExtractionParseError as exc:
+                logger.warning(f"[{_now()}] │  Parse error on attempt {attempt + 1}: {exc}")
+
+                if attempt >= MAX_RETRIES:
+                    logger.error(
+                        f"[{_now()}] │  All {MAX_RETRIES} retries exhausted "
+                        "(parse error) — flagging all fields as LOW confidence"
+                    )
+                    return None, {}
+
+                # Prepare next attempt: parse-error retry (single-turn + hint)
+                fail_type = "parse"
+                parse_hint = _CORRECTION_PARSE
+                extra_turns = []          # no multi-turn context for parse errors
+                continue
+
+            # ── Step 3 confidence summary ─────────────────────────────────────
+            conf = {n: getattr(metrics, n).confidence for n in metrics.model_fields}
+            high = sum(1 for c in conf.values() if c == "HIGH")
+            med  = sum(1 for c in conf.values() if c == "MEDIUM")
+            low  = sum(1 for c in conf.values() if c == "LOW")
+            logger.info(
+                f"[{_now()}] │  Step 3 – confidence: "
+                f"HIGH={high}, MEDIUM={med}, LOW={low}"
+            )
+
+            # ── Step 4 validation ─────────────────────────────────────────────
+            failures = self._run_validation(metrics)
+
+            # ── Check for balance-sheet failure ───────────────────────────────
+            bs_failure_msg = self._get_balance_sheet_failure_message(failures)
+
+            if bs_failure_msg and attempt < MAX_RETRIES:
+                logger.warning(
+                    f"[{_now()}] │  Balance sheet check failed — "
+                    f"will retry with correction (attempt {attempt + 1}/{MAX_RETRIES})"
+                )
+                # Prepare MULTI-TURN retry: Claude sees its previous tool call
+                fail_type = "balance_sheet"
+                parse_hint = None        # correction goes into the new user turn, not the system prompt
+                extra_turns = [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_use_id,
+                                "name": "record_fund_metrics",
+                                "input": tool_input,
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": (
+                                    "Extraction received. "
+                                    "However there is a problem with the balance sheet figures."
+                                ),
+                            },
+                            {
+                                "type": "text",
+                                "text": _CORRECTION_BALANCE_SHEET,
+                            },
+                        ],
+                    },
+                ]
+                continue  # next attempt
+
+            # Success (or balance-sheet still failing but retries exhausted)
+            if bs_failure_msg and attempt >= MAX_RETRIES:
+                logger.warning(
+                    f"[{_now()}] │  Balance sheet failures persist after "
+                    f"{MAX_RETRIES} retries — routing affected fields to review"
+                )
+
+            break  # exit retry loop
+
+        return metrics, failures
 
     # ── Step 4 — Validation ────────────────────────────────────────────────────
 
-    def _run_validation(
-        self, metrics: FundMetrics
-    ) -> Dict[str, List[str]]:
+    def _run_validation(self, metrics: FundMetrics) -> Dict[str, List[str]]:
         """
         Run DataValidator checks and return a dict mapping field name →
-        list of failure strings (errors and/or warnings).
+        list of failure strings.
         """
         logger.info(f"[{_now()}] │  Step 4 – Running DataValidator checks…")
 
-        # Build a FinancialMetrics dataclass from the extracted values so the
-        # existing validator can operate on it without modification
         fm = FinancialMetrics(
             company_name="fund",
             report_date=datetime.now().strftime("%Y-%m-%d"),
@@ -543,12 +715,9 @@ Additional rules:
         )
 
         result = self.validator.validate(fm)
-
-        # Map validation messages back to specific field names
         field_failures: Dict[str, List[str]] = {}
 
         for msg in result.get("errors", []):
-            # e.g. "revenue: value 0 outside valid range [0, 1000000000000]"
             field = msg.split(":")[0].strip()
             field_failures.setdefault(field, []).append(f"VALIDATION ERROR: {msg}")
 
@@ -569,14 +738,27 @@ Additional rules:
                 )
 
         if field_failures:
+            named = [k for k in field_failures if k != "_general"]
             logger.warning(
-                f"[{_now()}] │  Validation issues on: "
-                + ", ".join(k for k in field_failures if k != "_general")
+                f"[{_now()}] │  Validation issues on: {', '.join(named) or '(general)'}"
             )
         else:
             logger.info(f"[{_now()}] │  All validation checks passed ✓")
 
         return field_failures
+
+    def _get_balance_sheet_failure_message(
+        self, failures: Dict[str, List[str]]
+    ) -> Optional[str]:
+        """
+        Return the first balance-sheet warning message found in *failures*,
+        or None if the balance sheet is clean.
+        """
+        for field in ("total_assets", "total_liabilities", "total_equity"):
+            for msg in failures.get(field, []):
+                if "balance sheet" in msg.lower():
+                    return msg
+        return None
 
     # ── Steps 5 & 6 — Route fields ────────────────────────────────────────────
 
@@ -591,10 +773,7 @@ Additional rules:
           • LOW confidence OR validation failure → review/review_queue.csv
           • HIGH / MEDIUM + no failures          → output/{stem}.json
 
-        Returns
-        -------
-        int
-            Number of fields sent to the review queue.
+        Returns the number of fields sent to the review queue.
         """
         logger.info(f"[{_now()}] │  Steps 5 & 6 – Routing fields to output / review…")
 
@@ -603,14 +782,11 @@ Additional rules:
 
         for field_name in metrics.model_fields:
             fe: FieldExtraction = getattr(metrics, field_name)
-
             flag_reasons: List[str] = []
 
-            # Rule: LOW confidence always flags
             if fe.confidence == "LOW":
                 flag_reasons.append(f"Low confidence: {fe.reason}")
 
-            # Rule: validation failures flag regardless of confidence
             for val_msg in validation_failures.get(field_name, []):
                 flag_reasons.append(val_msg)
 
@@ -638,7 +814,6 @@ Additional rules:
                     f"[{fe.confidence}] = {fe.value!r}"
                 )
 
-        # Write clean fields to output/{stem}.json
         stem = Path(filename).stem
         output_path = self.output_dir / f"{stem}.json"
         payload = {
@@ -650,23 +825,78 @@ Additional rules:
         with open(output_path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
 
-        logger.info(
-            f"[{_now()}] │  Wrote {len(clean)} accepted field(s)  → {output_path}"
-        )
-        logger.info(
-            f"[{_now()}] │  Flagged {flagged_count} field(s)       → {self.review_csv}"
-        )
+        logger.info(f"[{_now()}] │  Wrote {len(clean)} accepted field(s)  → {output_path}")
+        logger.info(f"[{_now()}] │  Flagged {flagged_count} field(s)       → {self.review_csv}")
         return flagged_count
+
+    # ── Parse-exhaustion fallback ──────────────────────────────────────────────
+
+    def _flag_all_fields_low(self, filename: str, reason: str) -> int:
+        """
+        Write every field as LOW-confidence to review_queue.csv and an
+        empty-fields JSON to output/.  Called when all retries are exhausted
+        due to persistent parse failures.
+
+        Returns the number of fields flagged (always len(FundMetrics.model_fields)).
+        """
+        logger.error(f"[{_now()}] │  Flagging all fields LOW: {reason}")
+
+        field_names = list(FundMetrics.model_fields.keys())
+        for field_name in field_names:
+            self._append_review_row(
+                filename=filename,
+                field_name=field_name,
+                extracted_value=None,
+                confidence="LOW",
+                reason=f"Extraction failed after {MAX_RETRIES} retries: {reason}",
+            )
+
+        # Write an empty output JSON so downstream tools don't break
+        stem = Path(filename).stem
+        output_path = self.output_dir / f"{stem}.json"
+        payload = {
+            "source_file": filename,
+            "extraction_model": MODEL,
+            "extraction_timestamp": datetime.now().isoformat(),
+            "extraction_failed": True,
+            "failure_reason": reason,
+            "fields": {},
+        }
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+
+        logger.error(
+            f"[{_now()}] │  All {len(field_names)} fields flagged → {self.review_csv}"
+        )
+        return len(field_names)
 
     # ── Orchestrator ───────────────────────────────────────────────────────────
 
     def _process_file(self, pdf_path: Path) -> int:
-        """Full pipeline for one PDF. Returns number of flagged fields."""
-        text = self._ingest_pdf(pdf_path)                       # Step 1
-        metrics = self._extract_with_claude(text, pdf_path.name)  # Steps 2 & 3
-        failures = self._run_validation(metrics)                  # Step 4
-        flagged = self._route_and_write(metrics, failures, pdf_path.name)  # Steps 5 & 6
-        return flagged
+        """
+        Full pipeline for one PDF.  Returns the number of flagged fields.
+
+        Extraction failures are caught internally via the retry loop;
+        only hard infrastructure errors (API auth, network) bubble up.
+        """
+        # Step 1 — Ingest
+        text = self._ingest_pdf(pdf_path)
+
+        # Steps 2, 3, 4 — Extract + confidence + validate (with retries)
+        logger.info(f"[{_now()}] │  Step 2 – Starting extraction (max_retries={MAX_RETRIES})…")
+        metrics, failures = self._extract_and_validate_with_retries(
+            text, pdf_path.name
+        )
+
+        # All parse retries exhausted → flag everything LOW
+        if metrics is None:
+            return self._flag_all_fields_low(
+                pdf_path.name,
+                f"No valid extraction after {MAX_RETRIES} retries",
+            )
+
+        # Steps 5 & 6 — Route clean fields to output, failures to review CSV
+        return self._route_and_write(metrics, failures, pdf_path.name)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -699,7 +929,7 @@ Additional rules:
             )
 
     def _append_run_log(self, summary: Dict[str, Any]) -> None:
-        """Append a run summary entry to output/run_log.jsonl."""
+        """Append a run-summary entry to output/run_log.jsonl."""
         log_path = self.output_dir / "run_log.jsonl"
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(summary) + "\n")
@@ -709,5 +939,5 @@ Additional rules:
 
 
 def _now() -> str:
-    """Return current timestamp string for log messages."""
+    """Return the current timestamp string used throughout log messages."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
