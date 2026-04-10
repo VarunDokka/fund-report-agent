@@ -6,30 +6,33 @@ CLI entry point for the fund-report extraction agent.
 
 Examples
 --------
-# Process all PDFs in reports/ (default)
+# Process all PDFs in reports/  (default)
 python run_agent.py
 
-# Process a specific file
+# Process a single file
 python run_agent.py --file reports/q3_2024.pdf
 
-# Use custom directories and a stricter confidence threshold
-python run_agent.py --reports-dir data/pdfs --output-dir data/out --threshold 0.75
+# Use custom directories
+python run_agent.py --reports-dir data/pdfs --output-dir data/out --review-dir data/review
 
-# List items currently waiting for human review
+# Show how many fields are currently flagged in the review queue
 python run_agent.py --review-status
+
+# Print all flagged rows as JSON
+python run_agent.py --list-flagged
 """
 
 import argparse
+import csv
 import json
 import logging
 import sys
 from pathlib import Path
 
-# Ensure the project root is on the path when run directly
+# Ensure the project root is on sys.path when run directly
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.agent import ExtractionAgent
-from src.review_queue import ReviewQueue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,13 +44,15 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fund Report Extraction Agent – extract structured financial "
-                    "data from PDF reports.",
+        description=(
+            "Fund Report Extraction Agent — extract structured financial data "
+            "from PDF reports using Claude AI."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
 
-    # Input / output
+    # ── Input / output paths ──────────────────────────────────────────────
     parser.add_argument(
         "--file", "-f",
         metavar="PDF",
@@ -63,108 +68,101 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default="output",
         metavar="DIR",
-        help="Directory for accepted structured output (default: output/).",
+        help="Directory for accepted JSON output (default: output/).",
     )
     parser.add_argument(
         "--review-dir",
         default="review",
         metavar="DIR",
-        help="Directory for flagged items (default: review/).",
+        help="Directory for review_queue.csv (default: review/).",
     )
 
-    # Agent behaviour
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.6,
-        metavar="FLOAT",
-        help="Confidence threshold below which results are sent to review "
-             "(default: 0.6).",
-    )
-
-    # Review-queue commands
-    review_group = parser.add_argument_group("Review queue management")
-    review_group.add_argument(
+    # ── Review-queue inspection ───────────────────────────────────────────
+    rq = parser.add_argument_group("Review queue")
+    rq.add_argument(
         "--review-status",
         action="store_true",
-        help="Print a summary of pending / approved / rejected review items and exit.",
+        help="Print a count of rows currently in review_queue.csv and exit.",
     )
-    review_group.add_argument(
-        "--list-pending",
+    rq.add_argument(
+        "--list-flagged",
         action="store_true",
-        help="Print all pending review items as JSON and exit.",
-    )
-    review_group.add_argument(
-        "--approve",
-        metavar="ITEM_ID",
-        help="Approve a pending review item by its ID.",
-    )
-    review_group.add_argument(
-        "--reject",
-        metavar="ITEM_ID",
-        help="Reject a pending review item by its ID.",
-    )
-    review_group.add_argument(
-        "--notes",
-        default="",
-        help="Optional reviewer notes to attach when approving or rejecting.",
+        help="Print all rows in review_queue.csv as JSON and exit.",
     )
 
     return parser.parse_args()
 
 
+def _review_csv_path(review_dir: str) -> Path:
+    return Path(review_dir) / "review_queue.csv"
+
+
+def cmd_review_status(review_dir: str) -> int:
+    """Print the number of flagged rows in review_queue.csv."""
+    csv_path = _review_csv_path(review_dir)
+    if not csv_path.exists():
+        print(json.dumps({"flagged_rows": 0, "note": "review_queue.csv not yet created"}))
+        return 0
+    with open(csv_path, newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    # Count per-field, per-document
+    by_file: dict = {}
+    for row in rows:
+        by_file.setdefault(row["filename"], 0)
+        by_file[row["filename"]] += 1
+    print(json.dumps({"flagged_rows": len(rows), "by_file": by_file}, indent=2))
+    return 0
+
+
+def cmd_list_flagged(review_dir: str) -> int:
+    """Print all rows in review_queue.csv as a JSON array."""
+    csv_path = _review_csv_path(review_dir)
+    if not csv_path.exists():
+        print("[]")
+        return 0
+    with open(csv_path, newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    print(json.dumps(rows, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main() -> int:
     args = parse_args()
-    review_queue = ReviewQueue(review_dir=args.review_dir)
 
-    # ── Review-queue management commands ────────────────────────────────
+    # ── Review-queue read commands (no extraction needed) ─────────────────
     if args.review_status:
-        summary = review_queue.summary()
-        print(json.dumps(summary, indent=2))
-        return 0
+        return cmd_review_status(args.review_dir)
 
-    if args.list_pending:
-        pending = review_queue.list_pending()
-        print(json.dumps(pending, indent=2, default=str))
-        return 0
+    if args.list_flagged:
+        return cmd_list_flagged(args.review_dir)
 
-    if args.approve:
-        ok = review_queue.approve(args.approve, notes=args.notes)
-        print("Approved." if ok else "Item not found.")
-        return 0 if ok else 1
-
-    if args.reject:
-        ok = review_queue.reject(args.reject, notes=args.notes)
-        print("Rejected." if ok else "Item not found.")
-        return 0 if ok else 1
-
-    # ── Extraction run ───────────────────────────────────────────────────
-    agent = ExtractionAgent(
-        reports_dir=args.reports_dir,
-        output_dir=args.output_dir,
-        review_dir=args.review_dir,
-        confidence_threshold=args.threshold,
-    )
+    # ── Extraction run ────────────────────────────────────────────────────
+    try:
+        agent = ExtractionAgent(
+            reports_dir=args.reports_dir,
+            output_dir=args.output_dir,
+            review_dir=args.review_dir,
+        )
+    except EnvironmentError as exc:
+        logger.error(str(exc))
+        return 1
 
     if args.file:
-        pdf_path = Path(args.file)
-        if not pdf_path.exists():
-            logger.error(f"File not found: {pdf_path}")
+        result = agent.process_single(args.file)
+        if result is None:
+            print("Extraction failed — check logs for details.")
             return 1
-        metrics = agent.process_single(str(pdf_path))
-        if metrics:
-            print(f"\nExtraction complete: {metrics.company_name}")
-            print(f"  Confidence : {metrics.extraction_confidence:.2f}")
-            print(f"  Source     : {metrics.source_file}")
-        else:
-            print("Extraction failed – check logs for details.")
-            return 1
+        print(f"\nExtraction complete: {args.file}")
+        print(f"  Fields accepted : {len(result.get('fields', {}))}")
+        print(f"  Output          : {Path(args.output_dir) / (Path(args.file).stem + '.json')}")
+        flagged = sum(1 for _ in open(_review_csv_path(args.review_dir))) - 1  # minus header
+        print(f"  Review queue    : {max(flagged, 0)} total flagged row(s)")
     else:
         summary = agent.run()
-        print("\n── Run summary ─────────────────────────────────")
+        print("\n── Run summary ───────────────────────────────────────")
         for key, value in summary.items():
-            print(f"  {key:<12}: {value}")
-        print("────────────────────────────────────────────────")
+            print(f"  {key:<18}: {value}")
+        print("──────────────────────────────────────────────────────")
 
     return 0
 
