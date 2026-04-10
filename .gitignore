@@ -1,0 +1,23 @@
+# Environment — never commit secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Generated output (keep examples but ignore run artifacts)
+output/*.json
+output/*.csv
+output/*.xlsx
+output/run_log.jsonl
+
+# Review queue (CSV grows with every run)
+review/review_queue.csv
+review/pending/
+review/approved/
+review/rejected/
