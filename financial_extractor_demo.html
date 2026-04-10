@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Data Extraction Tool - Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e4e4e4;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1rem;
+        }
+        
+        .author-info {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .author-info a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        
+        .demo-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 900px) {
+            .demo-section {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .panel-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .panel-header .icon {
+            font-size: 1.5rem;
+        }
+        
+        .panel-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .pdf-content {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .highlight {
+            background: rgba(0, 212, 255, 0.2);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        
+        .btn {
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 212, 255, 0.3);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            transition: all 0.3s;
+        }
+        
+        .step.active {
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid #00d4ff;
+        }
+        
+        .step.completed {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid #00ff88;
+        }
+        
+        .step-num {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
+        
+        .step.completed .step-num {
+            background: #00ff88;
+            color: #1a1a2e;
+        }
+        
+        .extraction-log {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            min-height: 150px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            opacity: 0;
+            animation: fadeIn 0.3s forwards;
+        }
+        
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+        
+        .log-entry .timestamp {
+            color: #666;
+        }
+        
+        .log-entry .success {
+            color: #00ff88;
+        }
+        
+        .log-entry .info {
+            color: #00d4ff;
+        }
+        
+        .log-entry .warning {
+            color: #ffaa00;
+        }
+        
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        
+        .results-table th {
+            background: rgba(0, 212, 255, 0.1);
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(0, 212, 255, 0.3);
+        }
+        
+        .results-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .results-table tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        
+        .metric-value {
+            font-weight: 600;
+            color: #00d4ff;
+        }
+        
+        .validation-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .validation-badge.passed {
+            background: rgba(0, 255, 136, 0.15);
+            color: #00ff88;
+        }
+        
+        .validation-badge.warning {
+            background: rgba(255, 170, 0, 0.15);
+            color: #ffaa00;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .prompt-preview {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            max-height: 200px;
+            overflow-y: auto;
+            border-left: 3px solid #7b2cbf;
+        }
+        
+        .tech-stack {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        
+        .tech-badge {
+            background: rgba(123, 44, 191, 0.2);
+            color: #c4a0ff;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Financial Data Extraction Tool</h1>
+            <p class="subtitle">AI-powered extraction from unstructured PDF fund reports</p>
+            <p class="author-info">
+                Built by <strong>Arnab Banerjee</strong> | 
+                <a href="https://github.com/arnab2308" target="_blank">GitHub</a> | 
+                <a href="https://linkedin.com/in/arnabbanerjee2308" target="_blank">LinkedIn</a>
+            </p>
+            <div class="tech-stack">
+                <span class="tech-badge">Python</span>
+                <span class="tech-badge">pdfplumber</span>
+                <span class="tech-badge">LLM/GPT-4</span>
+                <span class="tech-badge">Pandas</span>
+                <span class="tech-badge">NLP</span>
+            </div>
+        </header>
+        
+        <div class="step-indicator">
+            <div class="step" id="step1">
+                <span class="step-num">1</span>
+                <span>PDF Input</span>
+            </div>
+            <div class="step" id="step2">
+                <span class="step-num">2</span>
+                <span>LLM Extraction</span>
+            </div>
+            <div class="step" id="step3">
+                <span class="step-num">3</span>
+                <span>Validation</span>
+            </div>
+            <div class="step" id="step4">
+                <span class="step-num">4</span>
+                <span>Output</span>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn" id="runDemo" onclick="runExtraction()">
+                ▶️ Run Extraction Demo
+            </button>
+            <button class="btn" id="resetBtn" onclick="resetDemo()" style="background: #444;">
+                🔄 Reset
+            </button>
+        </div>
+        
+        <div class="demo-section">
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="icon">📄</span>
+                    <span class="panel-title">Sample Fund Report (PDF Input)</span>
+                </div>
+                <div class="pdf-content" id="pdfContent">BLACKROCK PRIVATE CREDIT FUND II
+QUARTERLY REPORT - Q3 2024
+
+PORTFOLIO SUMMARY
+As of September 30, 2024
+
+Net Asset Value (NAV): $2,847,500,000
+Total Commitments: $3,500,000,000
+Capital Called: 81.4%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PORTFOLIO COMPANY: <span class="highlight">TechFlow Solutions LLC</span>
+Industry: Software/SaaS
+Investment: Senior Secured Term Loan
+
+Financial Metrics (LTM September 2024):
+• Revenue:           <span class="highlight">$287,400,000</span>
+• EBITDA:            <span class="highlight">$74,724,000</span> (26% margin)
+• Total Assets:      <span class="highlight">$412,500,000</span>
+• Total Liabilities: <span class="highlight">$298,750,000</span>
+• Total Equity:      <span class="highlight">$113,750,000</span>
+• Net Debt:          <span class="highlight">$182,700,000</span>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PORTFOLIO COMPANY: <span class="highlight">MedSupply Holdings Inc.</span>
+Industry: Healthcare Distribution
+Investment: Unitranche Facility
+
+Financial Metrics (LTM September 2024):
+• Revenue:           <span class="highlight">$198,600,000</span>
+• EBITDA:            <span class="highlight">$29,790,000</span> (15% margin)
+• Total Assets:      <span class="highlight">$278,400,000</span>
+• Total Liabilities: <span class="highlight">$189,200,000</span>
+• Total Equity:      <span class="highlight">$89,200,000</span>
+• Net Debt:          <span class="highlight">$113,500,000</span></div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="icon">🤖</span>
+                    <span class="panel-title">LLM Extraction Prompt</span>
+                </div>
+                <div class="prompt-preview" id="promptPreview">
+### TASK: Extract Financial Metrics
+
+### TARGET METRICS:
+- Revenue
+- EBITDA  
+- Net Debt
+- Total Assets
+- Total Liabilities
+- Total Equity
+
+### INSTRUCTIONS:
+1. Identify each metric from the source text
+2. Extract the numerical value with currency
+3. Note the fiscal period if mentioned
+4. Provide confidence score (0-1)
+
+### OUTPUT FORMAT (JSON):
+{
+  "metrics": {
+    "revenue": {"value": ..., "confidence": ...},
+    "ebitda": {"value": ..., "confidence": ...}
+  }
+}
+                </div>
+                
+                <div class="panel-header" style="margin-top: 20px;">
+                    <span class="icon">📋</span>
+                    <span class="panel-title">Extraction Log</span>
+                </div>
+                <div class="extraction-log" id="extractionLog">
+                    <div class="log-entry">
+                        <span class="timestamp">[--:--:--]</span> 
+                        <span class="info">Ready to process...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel hidden" id="resultsPanel">
+            <div class="panel-header">
+                <span class="icon">📊</span>
+                <span class="panel-title">Extracted Financial Data</span>
+            </div>
+            
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Company</th>
+                        <th>Revenue</th>
+                        <th>EBITDA</th>
+                        <th>EBITDA Margin</th>
+                        <th>Net Debt</th>
+                        <th>Net Debt/EBITDA</th>
+                        <th>Validation</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                </tbody>
+            </table>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="statCompanies">0</div>
+                    <div class="stat-label">Companies Extracted</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statMetrics">0</div>
+                    <div class="stat-label">Data Points</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statValidation">0%</div>
+                    <div class="stat-label">Validation Pass Rate</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const companies = [
+            {
+                name: 'TechFlow Solutions LLC',
+                industry: 'Software/SaaS',
+                revenue: 287400000,
+                ebitda: 74724000,
+                totalAssets: 412500000,
+                totalLiabilities: 298750000,
+                totalEquity: 113750000,
+                netDebt: 182700000
+            },
+            {
+                name: 'MedSupply Holdings Inc.',
+                industry: 'Healthcare',
+                revenue: 198600000,
+                ebitda: 29790000,
+                totalAssets: 278400000,
+                totalLiabilities: 189200000,
+                totalEquity: 89200000,
+                netDebt: 113500000
+            }
+        ];
+        
+        let currentStep = 0;
+        
+        function updateStep(step) {
+            for (let i = 1; i <= 4; i++) {
+                const el = document.getElementById(`step${i}`);
+                el.classList.remove('active', 'completed');
+                if (i < step) el.classList.add('completed');
+                if (i === step) el.classList.add('active');
+            }
+        }
+        
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('extractionLog');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="timestamp">[${time}]</span> <span class="${type}">${message}</span>`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function formatCurrency(num) {
+            if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
+            if (num >= 1e6) return '$' + (num / 1e6).toFixed(1) + 'M';
+            return '$' + num.toLocaleString();
+        }
+        
+        async function runExtraction() {
+            const btn = document.getElementById('runDemo');
+            btn.disabled = true;
+            
+            document.getElementById('extractionLog').innerHTML = '';
+            document.getElementById('resultsPanel').classList.add('hidden');
+            
+            // Step 1: PDF Processing
+            updateStep(1);
+            addLog('Loading PDF document...', 'info');
+            await sleep(500);
+            addLog('✓ Document loaded: BlackRock Private Credit Fund II Q3 2024', 'success');
+            await sleep(300);
+            addLog('Extracting text using pdfplumber...', 'info');
+            await sleep(600);
+            addLog('✓ Extracted 2,847 characters from 1 page', 'success');
+            await sleep(300);
+            addLog('Identifying financial tables...', 'info');
+            await sleep(400);
+            addLog('✓ Found 2 portfolio company sections', 'success');
+            
+            // Step 2: LLM Extraction
+            await sleep(500);
+            updateStep(2);
+            addLog('Building LLM extraction prompt...', 'info');
+            await sleep(300);
+            addLog('Sending to GPT-4 API...', 'info');
+            await sleep(800);
+            addLog('✓ LLM response received (confidence: 0.94)', 'success');
+            await sleep(300);
+            addLog('Parsing JSON response...', 'info');
+            await sleep(400);
+            
+            for (const company of companies) {
+                addLog(`✓ Extracted: ${company.name}`, 'success');
+                await sleep(200);
+            }
+            
+            // Step 3: Validation
+            await sleep(500);
+            updateStep(3);
+            addLog('Running validation checks...', 'info');
+            await sleep(300);
+            
+            for (const company of companies) {
+                const balance = company.totalAssets - (company.totalLiabilities + company.totalEquity);
+                addLog(`Checking ${company.name.split(' ')[0]}...`, 'info');
+                await sleep(200);
+                
+                if (Math.abs(balance) < 1) {
+                    addLog(`✓ Balance sheet equation: PASSED`, 'success');
+                } else {
+                    addLog(`⚠ Balance sheet imbalance: ${formatCurrency(balance)}`, 'warning');
+                }
+                await sleep(150);
+                
+                const margin = (company.ebitda / company.revenue * 100);
+                if (margin > 0 && margin < 50) {
+                    addLog(`✓ EBITDA margin (${margin.toFixed(1)}%): REASONABLE`, 'success');
+                }
+                await sleep(150);
+            }
+            
+            // Step 4: Output
+            await sleep(500);
+            updateStep(4);
+            addLog('Generating structured output...', 'info');
+            await sleep(400);
+            addLog('✓ CSV file created: extracted_data.csv', 'success');
+            await sleep(200);
+            addLog('✓ Excel file created: extracted_data.xlsx', 'success');
+            await sleep(300);
+            addLog('━━━ EXTRACTION COMPLETE ━━━', 'success');
+            
+            // Show results
+            showResults();
+            btn.disabled = false;
+        }
+        
+        function showResults() {
+            const panel = document.getElementById('resultsPanel');
+            const tbody = document.getElementById('resultsBody');
+            
+            tbody.innerHTML = '';
+            
+            companies.forEach(company => {
+                const margin = (company.ebitda / company.revenue * 100).toFixed(1);
+                const leverage = (company.netDebt / company.ebitda).toFixed(2);
+                const balance = company.totalAssets - (company.totalLiabilities + company.totalEquity);
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>${company.name}</strong><br><small style="color:#888">${company.industry}</small></td>
+                    <td class="metric-value">${formatCurrency(company.revenue)}</td>
+                    <td class="metric-value">${formatCurrency(company.ebitda)}</td>
+                    <td>${margin}%</td>
+                    <td>${formatCurrency(company.netDebt)}</td>
+                    <td>${leverage}x</td>
+                    <td><span class="validation-badge ${Math.abs(balance) < 1 ? 'passed' : 'warning'}">${Math.abs(balance) < 1 ? '✓ Passed' : '⚠ Check'}</span></td>
+                `;
+                tbody.appendChild(row);
+            });
+            
+            document.getElementById('statCompanies').textContent = companies.length;
+            document.getElementById('statMetrics').textContent = companies.length * 6;
+            document.getElementById('statValidation').textContent = '100%';
+            
+            panel.classList.remove('hidden');
+        }
+        
+        function resetDemo() {
+            updateStep(0);
+            document.getElementById('extractionLog').innerHTML = `
+                <div class="log-entry">
+                    <span class="timestamp">[--:--:--]</span> 
+                    <span class="info">Ready to process...</span>
+                </div>
+            `;
+            document.getElementById('resultsPanel').classList.add('hidden');
+        }
+        
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Core Dependencies
+pandas>=1.5.0
+pdfplumber>=0.10.0
+openpyxl>=3.1.0
+
+# PDF Processing
+pypdf>=3.0.0
+
+# LLM Integration (uncomment based on provider)
+# openai>=1.0.0
+# anthropic>=0.18.0
+
+# Optional: OCR for scanned documents
+# pytesseract>=0.3.10
+# pdf2image>=1.16.0
+
+# Development
+# pytest>=7.0.0
+# black>=23.0.0

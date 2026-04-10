@@ -1,0 +1,3 @@
+company_name,industry,revenue,ebitda,ebitda_margin,net_debt,net_debt_to_ebitda,total_assets,total_equity,debt_to_equity,extraction_date,source_document
+TechFlow Solutions LLC,Software/SaaS,287400000,74724000,26.0,182700000,2.44,412500000,113750000,1.98,2026-01-22,BlackRock Private Credit Fund II Q3 2024
+MedSupply Holdings Inc.,Healthcare Distribution,198600000,29790000,15.0,113500000,3.81,278400000,89200000,2.12,2026-01-22,BlackRock Private Credit Fund II Q3 2024
