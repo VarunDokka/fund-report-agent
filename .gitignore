@@ -21,3 +21,9 @@ review/review_queue.csv
 review/pending/
 review/approved/
 review/rejected/
+
+# Instagram transcript tool output
+ig-transcript-tool/transcripts/
+
+# Growth agent — never commit the saved Instagram session
+growth-agent/ingestion/auth_state.json
