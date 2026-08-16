@@ -6,7 +6,9 @@ This is the spine every other file in this project hangs off. It is seeded from 
 
 ## The person
 
-19–20 years old. University of Nottingham. Currently doing a Private Equity internship in London. Vegetarian. Trains/lifts. Prays every morning, before checking his phone.
+19–20 years old. University of Nottingham. Vegetarian. Trains/lifts. Prays every morning, before checking his phone.
+
+**Status as of 2026-08-16:** the Private Equity internship in London (referenced throughout this project's earlier files and the original Varun_Content_Plan.md) has ended. Currently home, training, posting to TikTok — no fixed next institutional chapter yet ("just chilling," his own words). Two of his most recent TikToks have shifted into teaching/explainer content — a genuinely new signal, unvalidated by any data yet. Logged as a tentative pillar in [pillars.md](../content/pillars.md) and as H11 in [experiments.md](../coaching/experiments.md). Do not backfill a "what's next" narrative that hasn't actually happened — see the goals.md and pillars.md updates from this date for what changed and why.
 
 ## The real narrative (say this out loud on camera, don't just imply it)
 

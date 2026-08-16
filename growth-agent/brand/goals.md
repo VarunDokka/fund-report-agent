@@ -8,7 +8,7 @@ Set once by Varun on 2026-08-16. Revisit only when Varun explicitly changes the 
 
 ## Posting capacity
 
-**1–3 videos/day**, alongside a PE internship in London.
+**1–3 videos/day**, originally set alongside a PE internship in London. **Update, 2026-08-16 (same day):** the internship has ended — Varun is currently home, training, posting to TikTok, no fixed next institutional commitment yet. This likely makes 1–3/day easier to sustain, not harder, but the number itself is unchanged since Varun hasn't stated a new one — don't inflate it without him saying so.
 
 ## Reality check (stoic coach reads the numbers, not vibes)
 
