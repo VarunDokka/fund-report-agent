@@ -115,12 +115,19 @@ Pin, in order: (1) the "your next exam is in 12hrs..." post (209,496 views — p
 **Result:** No data yet.
 **Status:** Open, low confidence — the mastery/identity pillar (H4, pillar 3) is the natural test bed for this once it has its own posts and follow data. Do not act on this alone; needs real daily-log.csv data to move past "interesting anomaly."
 
-### H11 — Teaching/explainer content is an emerging pillar worth tracking (unvalidated, day 0)
+### H11 — Teaching/explainer content is an emerging pillar worth tracking (unvalidated, n=2)
 **Hypothesis:** Varun's 2 most recent TikToks (posted after the internship ended) shifted into teaching/explainer content and may represent a real new pillar distinct from the exam-stress/internship discovery pillars — possibly overlapping with the mastery/Da Vinci layer (pillar 4) if the teaching content draws on finance/markets expertise, or a distinct education-format pillar in its own right (pillar 3 in `pillars.md`).
-**Source:** Varun, 2026-08-16, in conversation — not from any file. No analytics exist for these specific videos yet.
-**What we tried:** Not yet started — no baseline data.
-**Result:** No data yet. Explicitly do not treat this as validated; it's 2 posts with zero measured performance.
-**Status:** Open — the first thing `growth-analyst` should check once TikTok data starts flowing into `daily-log.csv` (via the new TikTok scraper, or `/log-day`). If these specific videos are in TikTok's history, backfilling their real numbers via `/log-day` now would let this close out sooner instead of waiting for future posts.
+**Source:** Varun, 2026-08-16, in conversation.
+
+**What we tried:** Nothing yet on the content side — these 2 videos were already posted before this pillar was identified, not a deliberate test.
+
+**Result (2026-08-16, Varun-reported views; view counts independently unverifiable — see note):** 2,500 views and 700 views. Account has 414 TikTok followers (confirmed directly — see note), so both posts reached well beyond the follower base (6.0x and 1.7x follower count respectively), meaning non-follower discovery is happening on TikTok too, same pattern as the Instagram data. No comment/share/save/new-follow numbers available for either post.
+
+**Verification note:** I checked `tiktok.com/@varun_dokka` directly — profile loads and confirms 414 followers, 61.6K total likes (public, no login needed). The per-video list is blocked by TikTok's bot-detection for an automated/logged-out session (confirmed via a direct API check — empty response body, not a UI glitch). Could not independently verify the specific 2,500/700 figures beyond Varun's own report. Treating them as accurate per the account being his own, but flagging that this project can't self-verify TikTok per-video numbers without the TikTok scraper's authenticated login (`ingestion/scrape_tiktok.py --login`) — that's the actual fix for "why can't you just look," not a limitation specific to these two posts.
+
+**Bonus finding, same check:** the TikTok bio is the identical stale one flagged and already fixed on Instagram — `20 | UoN | London / Vegetarian | Fitness | Uni Career growth`. This project's bio fix (H3) was Instagram-only; TikTok needs the same update, and now also needs the "pe intern" framing removed there too, same as Instagram.
+
+**Status:** Open, low-n. Real validation needs `growth-analyst` tracking a run of posts in this format via actual daily-log.csv data, not 2 self-reported numbers. Two concrete next steps: (1) apply the same bio fix from H3 to TikTok, (2) complete the TikTok scraper login so future teaching-format posts get tracked automatically instead of requiring manual reporting.
 
 ---
 
